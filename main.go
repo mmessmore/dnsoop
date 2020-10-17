@@ -37,7 +37,7 @@ func hasDNSLayer(packet *gopacket.Packet) bool {
 func getHost(packet *gopacket.Packet) (string, error) {
 	p := *packet
 
-	if ! hasDNSLayer(packet) {
+	if !hasDNSLayer(packet) {
 		return "", errors.New("Not a dns packet")
 	}
 
@@ -46,7 +46,6 @@ func getHost(packet *gopacket.Packet) (string, error) {
 	if dnsLayer.OpCode != layers.DNSOpCodeQuery {
 		return "", errors.New("Not a dns query")
 	}
-
 
 	for _, question := range dnsLayer.Questions {
 		if question.Type != layers.DNSTypeA {
@@ -94,8 +93,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packets := packetSource.Packets()
