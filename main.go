@@ -8,19 +8,18 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
+	"github.com/olekukonko/tablewriter"
 )
 
 var iface = flag.String("i", "eth0", "Network interface to capture on")
+var interval = flag.Int("I", 60, "Number of seconds to wait before printing interval output")
 var verbose = flag.Bool("v", false, "Verbose mode")
-var width = flag.Int("w", 80, "Terminal column width for printing tables")
 var onlyHostname = flag.String("H", "", "Count sources for a hostname, vs hostname counts")
 var snapLen int32 = 65535
 var filter = "udp and dst port 53"
@@ -93,51 +92,89 @@ func getSrc(packet *gopacket.Packet, hostname *string) (string, error) {
 	return src, nil
 }
 
-func dumpCounts(queryCnt *map[string]int) {
+func dumpCounts(queryCnt *map[string][]int, start time.Time, total bool) {
+
+	now := time.Now()
+	timeDelta := now.Sub(start)
+	totalMinutes := timeDelta.Minutes()
 
 	// Jump through hoops to sort the map by value into a slice for odering
 	type kv struct {
-		Key   string
-		Value int
+		Key      string
+		Total    int
+		Interval int
 	}
 	var ss []kv
 	for k, v := range *queryCnt {
-		ss = append(ss, kv{k, v})
+		ss = append(ss, kv{k, v[0], v[1]})
+		q := *queryCnt
+		q[k][1] = 0
 	}
 	sort.Slice(ss, func(i, j int) bool {
-		return ss[i].Value > ss[j].Value
+		return ss[i].Total > ss[j].Total
 	})
 
-	// Walk through the sorted slice and print them all pretty-like
-	maxWidth := *width
+	fmt.Printf("\nQueries from %s to %s\n\n",
+		start.Format("2006-01-02 15:04:05"),
+		now.Format("2006-01-02 15:04:05"))
+
+	// Walk through the sorted slice and create a table to print
+	var data [][]string
 	for _, item := range ss {
-		spaces := maxWidth - len(item.Key) - len(strconv.Itoa(item.Value))
-		if spaces < 0 {
-			spaces = 10
+		if total {
+			rate := float64(item.Total) / totalMinutes
+			data = append(data,
+				[]string{item.Key,
+					fmt.Sprintf("%d", item.Total),
+					fmt.Sprintf("%.2f", rate)})
+		} else {
+			rate := float64(item.Interval) / totalMinutes
+			data = append(data,
+				[]string{item.Key,
+					fmt.Sprintf("%d", item.Total),
+					fmt.Sprintf("%d", item.Interval),
+					fmt.Sprintf("%.2f", rate)})
 		}
-		fmt.Printf("%s%s%d\n", item.Key, strings.Repeat(" ", spaces), item.Value)
 	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	if total {
+		table.SetHeader([]string{"Host", "Total Count", "Rate/Min"})
+	} else {
+		table.SetHeader([]string{"Host", "Total Count", "Interval Count", "Rate/Min"})
+	}
+	table.SetBorder(false)
+	table.AppendBulk(data)
+	table.Render()
 }
 
 func main() {
 	var handle *pcap.Handle
 	var err error
 
-	var queryCnt = make(map[string]int)
+	var queryCnt = make(map[string][]int)
 
-	// handle sigterm and print counts
+	// keep track of time
+	// for total rate tracking
+	startTime := time.Now()
+	// init incremental rate tracking
+	lastTime := startTime
+
+	// handle sigterm, sigint and print counts
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT)
+	signal.Notify(sigs, syscall.SIGTERM)
 	go func() {
 		sig := <-sigs
 		log.Printf("Caught signal %v", sig)
-		dumpCounts(&queryCnt)
+		fmt.Println("TOTALS FOR RUN")
+		dumpCounts(&queryCnt, startTime, true)
 		os.Exit(0)
 	}()
 
 	flag.Parse()
 
-	log.Printf("Starting capure on interface %q", *iface)
+	fmt.Printf("Starting capure on interface %q\n", *iface)
 	handle, err = pcap.OpenLive(*iface, snapLen, true, pcap.BlockForever)
 	if err != nil {
 		log.Fatal(err)
@@ -150,7 +187,11 @@ func main() {
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packets := packetSource.Packets()
-	ticker := time.Tick(time.Minute)
+	// you have to make the int interval a Duration to make the types match
+	// this seems counter to the docs, where a bare number works, but
+	// it gets magically cast for you.  It just looks weird to me since
+	// interval is not in fact a Duration of any kind
+	ticker := time.Tick(time.Second * time.Duration(*interval))
 
 	for {
 		host := "none"
@@ -166,15 +207,16 @@ func main() {
 				continue
 			}
 
-			if _, ok := queryCnt[host]; ok {
-				queryCnt[host]++
+			if len(queryCnt[host]) < 1 {
+				queryCnt[host] = []int{1, 1}
 			} else {
-				queryCnt[host] = 1
+				queryCnt[host][0]++
+				queryCnt[host][1]++
 			}
 
 		case <-ticker:
-			log.Println("A minute")
-			dumpCounts(&queryCnt)
+			dumpCounts(&queryCnt, lastTime, false)
+			lastTime = time.Now()
 		}
 	}
 }
