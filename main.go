@@ -80,16 +80,22 @@ func getSrc(packet *gopacket.Packet, hostname *string) (string, error) {
 		return "", errors.New("Not a dns query")
 	}
 
+	isQuestion := false
 	for _, question := range dnsLayer.Questions {
 		if question.Type != layers.DNSTypeA {
 			continue
 		}
 		if string(question.Name) != *hostname {
-			return "", errors.New("No the hostname we were looking for")
+			return "", errors.New("Not the hostname we were looking for")
 		}
+		isQuestion = true
 	}
 
-	return src, nil
+	if isQuestion {
+		return src, nil
+	} else {
+		return "", errors.New("Not a question")
+	}
 }
 
 func dumpCounts(queryCnt *map[string][]int, start time.Time, total bool) {
