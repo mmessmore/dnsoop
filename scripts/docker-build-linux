@@ -1,0 +1,22 @@
+#!/bin/bash
+
+echo "Creating image"
+myimage=$(docker build . | grep '^Successfully built' | cut -d ' ' -f 3)
+if [ -z "$myimage" ]; then
+	echo "failed"
+	exit 1
+fi
+echo "Made image: ${myimage}"
+
+echo "Creating container"
+mycontainer=$(docker create --name dnsnoop "$myimage")
+if [ -z "$mycontainer" ]; then
+	echo "failed"
+	exit 1
+fi
+echo "Made container: ${mycontainer}"
+
+docker cp dnsnoop:/app/dist/dnsnoop.linux dist/ || exit $?
+docker rm "$mycontainer" || exit $?
+docker image rm "$myimage" || exit $?
+
