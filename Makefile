@@ -10,10 +10,13 @@ dist/dnsnoop.exe: export GOOS = windows
 dist/dnsnoop.exe: $(wildcard *.go) go.mod
 	go build -o dist/dnsnoop.exe
 
+# Force a static binary on Linux to avoid libpcap version issues
 dist/dnsnoop.linux: export GOOS = linux
+dist/dnsnoop.linux: export GOARCH = amd64
+dist/dnsnoop.linux: export CGO_ENABLED = C0
 dist/dnsnoop.linux: $(wildcard *.go) go.mod
 	# try to build and fall back to building with docker
-	go build -o dist/dnsnoop.linux || \
+	go build -a -ldflags="-extldflags=-static" -o dist/dnsnoop.linux || \
 		scripts/docker-build-linux
 
 
